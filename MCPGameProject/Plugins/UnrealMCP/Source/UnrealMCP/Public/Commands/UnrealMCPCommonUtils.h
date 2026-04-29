@@ -5,6 +5,7 @@
 
 // Forward declarations
 class AActor;
+class UActorComponent;
 class UBlueprint;
 class UEdGraph;
 class UEdGraphNode;
@@ -40,6 +41,12 @@ public:
     static UBlueprint* FindBlueprint(const FString& BlueprintName);
     static UBlueprint* FindBlueprintByName(const FString& BlueprintName);
     static UEdGraph* FindOrCreateEventGraph(UBlueprint* Blueprint);
+
+    // Resolves a component template by name from a blueprint, checking SCS nodes
+    // (BP-added components) first, then falling back to native components on the
+    // generated class CDO (C++ CreateDefaultSubobject). Returns the mutable
+    // template object suitable for editing defaults that propagate to instances.
+    static UActorComponent* FindComponentTemplateInBlueprint(UBlueprint* Blueprint, const FString& ComponentName);
     
     // Blueprint node utilities
     static UK2Node_Event* CreateEventNode(UEdGraph* Graph, const FString& EventName, const FVector2D& Position);

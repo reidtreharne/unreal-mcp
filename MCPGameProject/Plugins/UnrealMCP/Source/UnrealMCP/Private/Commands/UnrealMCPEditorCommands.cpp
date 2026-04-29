@@ -7,10 +7,12 @@
 #include "HighResScreenshot.h"
 #include "Engine/GameViewportClient.h"
 #include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 #include "GameFramework/Actor.h"
 #include "Engine/Selection.h"
 #include "Kismet/GameplayStatics.h"
 #include "Engine/StaticMeshActor.h"
+#include "Engine/StaticMesh.h"
 #include "Engine/DirectionalLight.h"
 #include "Engine/PointLight.h"
 #include "Engine/SpotLight.h"
@@ -20,6 +22,12 @@
 #include "Subsystems/EditorActorSubsystem.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
+#include "AssetToolsModule.h"
+#include "IAssetTools.h"
+#include "Factories/FbxFactory.h"
+#include "Factories/FbxImportUI.h"
+#include "Factories/FbxStaticMeshImportData.h"
+#include "AutomatedAssetImportData.h"
 
 FUnrealMCPEditorCommands::FUnrealMCPEditorCommands()
 {
@@ -74,7 +82,12 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleCommand(const FString& C
     {
         return HandleTakeScreenshot(Params);
     }
-    
+    // Asset import
+    else if (CommandType == TEXT("import_fbx"))
+    {
+        return HandleImportFBX(Params);
+    }
+
     return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown editor command: %s"), *CommandType));
 }
 
@@ -597,4 +610,90 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleTakeScreenshot(const TSh
     }
     
     return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to take screenshot"));
+}
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleImportFBX(const TSharedPtr<FJsonObject>& Params)
+{
+    FString SourcePath;
+    if (!Params->TryGetStringField(TEXT("source_path"), SourcePath))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'source_path' parameter (absolute path to .fbx)"));
+    }
+
+    FString DestinationPath;
+    if (!Params->TryGetStringField(TEXT("destination_path"), DestinationPath))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'destination_path' parameter (e.g. /Game/Meshes/Rooms/MedBay)"));
+    }
+
+    SourcePath = FPaths::ConvertRelativePathToFull(SourcePath);
+    if (!FPaths::FileExists(SourcePath))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Source FBX not found: %s"), *SourcePath));
+    }
+
+    bool bReplaceExisting = true;
+    Params->TryGetBoolField(TEXT("replace_existing"), bReplaceExisting);
+
+    bool bCombineMeshes = false;
+    Params->TryGetBoolField(TEXT("combine_meshes"), bCombineMeshes);
+
+    bool bAutoGenerateCollision = false;
+    Params->TryGetBoolField(TEXT("auto_generate_collision"), bAutoGenerateCollision);
+
+    bool bImportMaterials = false;
+    Params->TryGetBoolField(TEXT("import_materials"), bImportMaterials);
+
+    bool bImportTextures = false;
+    Params->TryGetBoolField(TEXT("import_textures"), bImportTextures);
+
+    UFbxFactory* FbxFactory = NewObject<UFbxFactory>();
+    FbxFactory->ImportUI->bAutomatedImportShouldDetectType = false;
+    FbxFactory->ImportUI->MeshTypeToImport = FBXIT_StaticMesh;
+    FbxFactory->ImportUI->bImportMesh = true;
+    FbxFactory->ImportUI->bImportMaterials = bImportMaterials;
+    FbxFactory->ImportUI->bImportTextures = bImportTextures;
+    FbxFactory->ImportUI->bImportAnimations = false;
+    FbxFactory->ImportUI->bImportAsSkeletal = false;
+
+    if (UFbxStaticMeshImportData* MeshImportData = FbxFactory->ImportUI->StaticMeshImportData)
+    {
+        MeshImportData->bCombineMeshes = bCombineMeshes;
+        MeshImportData->bAutoGenerateCollision = bAutoGenerateCollision;
+    }
+
+    UAutomatedAssetImportData* ImportData = NewObject<UAutomatedAssetImportData>();
+    ImportData->Factory = FbxFactory;
+    ImportData->bReplaceExisting = bReplaceExisting;
+    ImportData->DestinationPath = DestinationPath;
+    ImportData->Filenames.Add(SourcePath);
+
+    FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools");
+    TArray<UObject*> ImportedAssets = AssetToolsModule.Get().ImportAssetsAutomated(ImportData);
+
+    if (ImportedAssets.Num() == 0)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("FBX import returned no assets (source=%s, dest=%s)"), *SourcePath, *DestinationPath));
+    }
+
+    TArray<TSharedPtr<FJsonValue>> AssetArray;
+    for (UObject* Asset : ImportedAssets)
+    {
+        if (!Asset)
+        {
+            continue;
+        }
+        TSharedPtr<FJsonObject> AssetObj = MakeShared<FJsonObject>();
+        AssetObj->SetStringField(TEXT("name"), Asset->GetName());
+        AssetObj->SetStringField(TEXT("path"), Asset->GetPathName());
+        AssetObj->SetStringField(TEXT("class"), Asset->GetClass()->GetName());
+        AssetArray.Add(MakeShared<FJsonValueObject>(AssetObj));
+    }
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetStringField(TEXT("source_path"), SourcePath);
+    ResultObj->SetStringField(TEXT("destination_path"), DestinationPath);
+    ResultObj->SetNumberField(TEXT("imported_count"), ImportedAssets.Num());
+    ResultObj->SetArrayField(TEXT("assets"), AssetArray);
+    return ResultObj;
 } 

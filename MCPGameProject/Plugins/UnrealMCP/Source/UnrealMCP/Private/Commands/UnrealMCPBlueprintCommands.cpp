@@ -194,26 +194,26 @@ TSharedPtr<FJsonObject> FUnrealMCPBlueprintCommands::HandleAddComponentToBluepri
     UClass* ComponentClass = nullptr;
 
     // Try to find the class with exact name first
-    ComponentClass = FindObject<UClass>(ANY_PACKAGE, *ComponentType);
+    ComponentClass = FindFirstObject<UClass>(*ComponentType, EFindFirstObjectOptions::None);
     
     // If not found, try with "Component" suffix
     if (!ComponentClass && !ComponentType.EndsWith(TEXT("Component")))
     {
         FString ComponentTypeWithSuffix = ComponentType + TEXT("Component");
-        ComponentClass = FindObject<UClass>(ANY_PACKAGE, *ComponentTypeWithSuffix);
+        ComponentClass = FindFirstObject<UClass>(*ComponentTypeWithSuffix, EFindFirstObjectOptions::None);
     }
     
     // If still not found, try with "U" prefix
     if (!ComponentClass && !ComponentType.StartsWith(TEXT("U")))
     {
         FString ComponentTypeWithPrefix = TEXT("U") + ComponentType;
-        ComponentClass = FindObject<UClass>(ANY_PACKAGE, *ComponentTypeWithPrefix);
+        ComponentClass = FindFirstObject<UClass>(*ComponentTypeWithPrefix, EFindFirstObjectOptions::None);
         
         // Try with both prefix and suffix
         if (!ComponentClass && !ComponentType.EndsWith(TEXT("Component")))
         {
             FString ComponentTypeWithBoth = TEXT("U") + ComponentType + TEXT("Component");
-            ComponentClass = FindObject<UClass>(ANY_PACKAGE, *ComponentTypeWithBoth);
+            ComponentClass = FindFirstObject<UClass>(*ComponentTypeWithBoth, EFindFirstObjectOptions::None);
         }
     }
     
@@ -322,52 +322,17 @@ TSharedPtr<FJsonObject> FUnrealMCPBlueprintCommands::HandleSetComponentProperty(
             Blueprint->GeneratedClass ? *Blueprint->GeneratedClass->GetName() : TEXT("NULL"));
     }
 
-    // Find the component
-    USCS_Node* ComponentNode = nullptr;
-    UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Searching for component %s in blueprint nodes"), *ComponentName);
-    
-    if (!Blueprint->SimpleConstructionScript)
-    {
-        UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - SimpleConstructionScript is NULL for blueprint %s"), *BlueprintName);
-        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Invalid blueprint construction script"));
-    }
-    
-    for (USCS_Node* Node : Blueprint->SimpleConstructionScript->GetAllNodes())
-    {
-        if (Node)
-        {
-            UE_LOG(LogTemp, Verbose, TEXT("SetComponentProperty - Found node: %s"), *Node->GetVariableName().ToString());
-            if (Node->GetVariableName().ToString() == ComponentName)
-            {
-                ComponentNode = Node;
-                break;
-            }
-        }
-        else
-        {
-            UE_LOG(LogTemp, Warning, TEXT("SetComponentProperty - Found NULL node in blueprint"));
-        }
-    }
+    UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Searching for component %s in blueprint (SCS + native CDO)"), *ComponentName);
 
-    if (!ComponentNode)
+    UActorComponent* ComponentTemplate = FUnrealMCPCommonUtils::FindComponentTemplateInBlueprint(Blueprint, ComponentName);
+    if (!ComponentTemplate)
     {
         UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - Component not found: %s"), *ComponentName);
         return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Component not found: %s"), *ComponentName));
     }
-    else
-    {
-        UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Component found: %s (Class: %s)"), 
-            *ComponentName, 
-            ComponentNode->ComponentTemplate ? *ComponentNode->ComponentTemplate->GetClass()->GetName() : TEXT("NULL"));
-    }
 
-    // Get the component template
-    UObject* ComponentTemplate = ComponentNode->ComponentTemplate;
-    if (!ComponentTemplate)
-    {
-        UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - Component template is NULL for %s"), *ComponentName);
-        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Invalid component template"));
-    }
+    UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Component found: %s (Class: %s)"),
+        *ComponentName, *ComponentTemplate->GetClass()->GetName());
 
     // Check if this is a Spring Arm component and log special debug info
     if (ComponentTemplate->GetClass()->GetName().Contains(TEXT("SpringArm")))
@@ -771,23 +736,13 @@ TSharedPtr<FJsonObject> FUnrealMCPBlueprintCommands::HandleSetPhysicsProperties(
         return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
     }
 
-    // Find the component
-    USCS_Node* ComponentNode = nullptr;
-    for (USCS_Node* Node : Blueprint->SimpleConstructionScript->GetAllNodes())
-    {
-        if (Node && Node->GetVariableName().ToString() == ComponentName)
-        {
-            ComponentNode = Node;
-            break;
-        }
-    }
-
-    if (!ComponentNode)
+    UActorComponent* ComponentTemplate = FUnrealMCPCommonUtils::FindComponentTemplateInBlueprint(Blueprint, ComponentName);
+    if (!ComponentTemplate)
     {
         return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Component not found: %s"), *ComponentName));
     }
 
-    UPrimitiveComponent* PrimComponent = Cast<UPrimitiveComponent>(ComponentNode->ComponentTemplate);
+    UPrimitiveComponent* PrimComponent = Cast<UPrimitiveComponent>(ComponentTemplate);
     if (!PrimComponent)
     {
         return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Component is not a primitive component"));
@@ -982,23 +937,13 @@ TSharedPtr<FJsonObject> FUnrealMCPBlueprintCommands::HandleSetStaticMeshProperti
         return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
     }
 
-    // Find the component
-    USCS_Node* ComponentNode = nullptr;
-    for (USCS_Node* Node : Blueprint->SimpleConstructionScript->GetAllNodes())
-    {
-        if (Node && Node->GetVariableName().ToString() == ComponentName)
-        {
-            ComponentNode = Node;
-            break;
-        }
-    }
-
-    if (!ComponentNode)
+    UActorComponent* ComponentTemplate = FUnrealMCPCommonUtils::FindComponentTemplateInBlueprint(Blueprint, ComponentName);
+    if (!ComponentTemplate)
     {
         return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Component not found: %s"), *ComponentName));
     }
 
-    UStaticMeshComponent* MeshComponent = Cast<UStaticMeshComponent>(ComponentNode->ComponentTemplate);
+    UStaticMeshComponent* MeshComponent = Cast<UStaticMeshComponent>(ComponentTemplate);
     if (!MeshComponent)
     {
         return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Component is not a static mesh component"));

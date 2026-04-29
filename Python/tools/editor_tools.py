@@ -366,4 +366,66 @@ def register_editor_tools(mcp: FastMCP):
             logger.error(error_msg)
             return {"success": False, "message": error_msg}
 
+    @mcp.tool()
+    def import_fbx(
+        ctx: Context,
+        source_path: str,
+        destination_path: str,
+        replace_existing: bool = True,
+        combine_meshes: bool = False,
+        auto_generate_collision: bool = False,
+        import_materials: bool = False,
+        import_textures: bool = False,
+    ) -> Dict[str, Any]:
+        """Import an FBX file as static mesh assets into the project.
+
+        Args:
+            ctx: The MCP context
+            source_path: Absolute filesystem path to the .fbx file
+            destination_path: Project content path (e.g. "/Game/Meshes/Rooms/MedBay")
+            replace_existing: If True, overwrite existing assets at destination
+            combine_meshes: If True, merge all FBX nodes into one static mesh.
+                For Odyssey rooms keep this False so UCX_/UBX_ collision meshes
+                stay separate from the visual mesh.
+            auto_generate_collision: If True, Unreal generates simple collision.
+                For Odyssey rooms keep this False — we author UBX_ collision in Blender.
+            import_materials: Import FBX-embedded materials.
+            import_textures: Import FBX-embedded textures.
+
+        Returns:
+            Dict with imported_count and a list of imported asset paths.
+        """
+        from unreal_mcp_server import get_unreal_connection
+
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+
+            params = {
+                "source_path": source_path,
+                "destination_path": destination_path,
+                "replace_existing": replace_existing,
+                "combine_meshes": combine_meshes,
+                "auto_generate_collision": auto_generate_collision,
+                "import_materials": import_materials,
+                "import_textures": import_textures,
+            }
+
+            logger.info(f"Importing FBX: {params}")
+            response = unreal.send_command("import_fbx", params)
+
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+
+            logger.info(f"import_fbx response: {response}")
+            return response
+
+        except Exception as e:
+            error_msg = f"Error importing FBX: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+
     logger.info("Editor tools registered successfully")

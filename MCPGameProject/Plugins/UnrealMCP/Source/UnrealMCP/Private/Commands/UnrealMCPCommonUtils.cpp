@@ -1,6 +1,9 @@
 #include "Commands/UnrealMCPCommonUtils.h"
 #include "GameFramework/Actor.h"
+#include "Misc/Paths.h"
 #include "Engine/Blueprint.h"
+#include "Engine/SimpleConstructionScript.h"
+#include "Engine/SCS_Node.h"
 #include "EdGraph/EdGraph.h"
 #include "EdGraph/EdGraphNode.h"
 #include "EdGraph/EdGraphPin.h"
@@ -153,8 +156,91 @@ UBlueprint* FUnrealMCPCommonUtils::FindBlueprint(const FString& BlueprintName)
 
 UBlueprint* FUnrealMCPCommonUtils::FindBlueprintByName(const FString& BlueprintName)
 {
-    FString AssetPath = TEXT("/Game/Blueprints/") + BlueprintName;
-    return LoadObject<UBlueprint>(nullptr, *AssetPath);
+    auto TryLoad = [](const FString& Path) -> UBlueprint*
+    {
+        return LoadObject<UBlueprint>(nullptr, *Path);
+    };
+
+    // 1. Caller passed a full content path: /Game/..., /Engine/..., etc.
+    if (BlueprintName.StartsWith(TEXT("/")))
+    {
+        if (UBlueprint* Direct = TryLoad(BlueprintName))
+        {
+            return Direct;
+        }
+    }
+    else
+    {
+        // 2. Caller passed a path relative to /Game/, e.g. "Rooms/MedBay/BP_RoomMedBay6".
+        if (UBlueprint* Found = TryLoad(TEXT("/Game/") + BlueprintName))
+        {
+            return Found;
+        }
+
+        // 3. Legacy fallback: /Game/Blueprints/<name>.
+        if (UBlueprint* Found = TryLoad(TEXT("/Game/Blueprints/") + BlueprintName))
+        {
+            return Found;
+        }
+    }
+
+    // 4. Last resort: AssetRegistry short-name search across all blueprints.
+    FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+    IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+
+    const FString ShortName = FPaths::GetBaseFilename(BlueprintName);
+    TArray<FAssetData> Assets;
+    AssetRegistry.GetAssetsByClass(UBlueprint::StaticClass()->GetClassPathName(), Assets, true);
+
+    for (const FAssetData& Asset : Assets)
+    {
+        if (Asset.AssetName.ToString().Equals(ShortName, ESearchCase::IgnoreCase))
+        {
+            if (UBlueprint* Found = Cast<UBlueprint>(Asset.GetAsset()))
+            {
+                return Found;
+            }
+        }
+    }
+
+    return nullptr;
+}
+
+UActorComponent* FUnrealMCPCommonUtils::FindComponentTemplateInBlueprint(UBlueprint* Blueprint, const FString& ComponentName)
+{
+    if (!Blueprint)
+    {
+        return nullptr;
+    }
+
+    if (Blueprint->SimpleConstructionScript)
+    {
+        for (USCS_Node* Node : Blueprint->SimpleConstructionScript->GetAllNodes())
+        {
+            if (Node && Node->GetVariableName().ToString() == ComponentName)
+            {
+                return Node->ComponentTemplate;
+            }
+        }
+    }
+
+    if (UClass* GeneratedClass = Blueprint->GeneratedClass)
+    {
+        if (AActor* CDO = Cast<AActor>(GeneratedClass->GetDefaultObject()))
+        {
+            TArray<UActorComponent*> Components;
+            CDO->GetComponents(Components);
+            for (UActorComponent* Component : Components)
+            {
+                if (Component && Component->GetFName().ToString() == ComponentName)
+                {
+                    return Component;
+                }
+            }
+        }
+    }
+
+    return nullptr;
 }
 
 UEdGraph* FUnrealMCPCommonUtils::FindOrCreateEventGraph(UBlueprint* Blueprint)
