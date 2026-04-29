@@ -428,4 +428,74 @@ def register_editor_tools(mcp: FastMCP):
             logger.error(error_msg)
             return {"success": False, "message": error_msg}
 
+    @mcp.tool()
+    def delete_asset(
+        ctx: Context,
+        asset_path: str,
+        delete_empty_parent: bool = False,
+    ) -> Dict[str, Any]:
+        """Delete a single asset (uasset) from the project.
+
+        Wraps UEditorAssetLibrary::DeleteAsset. The asset must not be open in
+        any editor and must not be referenced by other assets — Unreal will
+        refuse the delete in either case (you'll get a clear error back).
+
+        Args:
+            ctx: The MCP context.
+            asset_path: Project content path of the asset, e.g.
+                "/Game/Meshes/MyAsset". Must start with "/".
+                Note this is the asset path (folder + asset name), not the
+                object path — do NOT include the trailing ".AssetName" suffix
+                that some Unreal APIs return.
+            delete_empty_parent: If True and the asset's parent directory
+                becomes empty after the delete, also remove the directory.
+                Useful for cleaning up scratch folders created by import_fbx.
+                Refuses to delete mount roots (/Game, /Engine).
+
+        Returns:
+            On success::
+
+                {
+                    "status": "success",
+                    "result": {
+                        "asset_path": "/Game/...",
+                        "deleted": true,
+                        # only present when delete_empty_parent=True:
+                        "parent_directory": "/Game/...",
+                        "parent_directory_deleted": bool,
+                        "parent_skip_reason": "..."  # if not deleted
+                    }
+                }
+
+            On failure (asset doesn't exist, is referenced, etc.) returns the
+            standard error envelope with a descriptive message.
+        """
+        from unreal_mcp_server import get_unreal_connection
+
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+
+            params = {
+                "asset_path": asset_path,
+                "delete_empty_parent": delete_empty_parent,
+            }
+
+            logger.info(f"Deleting asset: {params}")
+            response = unreal.send_command("delete_asset", params)
+
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+
+            logger.info(f"delete_asset response: {response}")
+            return response
+
+        except Exception as e:
+            error_msg = f"Error deleting asset: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+
     logger.info("Editor tools registered successfully")

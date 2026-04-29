@@ -24,6 +24,7 @@
 #include "Engine/BlueprintGeneratedClass.h"
 #include "AssetToolsModule.h"
 #include "IAssetTools.h"
+#include "EditorAssetLibrary.h"
 #include "Factories/FbxFactory.h"
 #include "Factories/FbxImportUI.h"
 #include "Factories/FbxStaticMeshImportData.h"
@@ -86,6 +87,11 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleCommand(const FString& C
     else if (CommandType == TEXT("import_fbx"))
     {
         return HandleImportFBX(Params);
+    }
+    // Asset deletion
+    else if (CommandType == TEXT("delete_asset"))
+    {
+        return HandleDeleteAsset(Params);
     }
 
     return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown editor command: %s"), *CommandType));
@@ -696,4 +702,80 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleImportFBX(const TSharedP
     ResultObj->SetNumberField(TEXT("imported_count"), ImportedAssets.Num());
     ResultObj->SetArrayField(TEXT("assets"), AssetArray);
     return ResultObj;
-} 
+}
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleDeleteAsset(const TSharedPtr<FJsonObject>& Params)
+{
+    FString AssetPath;
+    if (!Params->TryGetStringField(TEXT("asset_path"), AssetPath))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'asset_path' parameter (e.g. /Game/Meshes/MyAsset)"));
+    }
+
+    if (!AssetPath.StartsWith(TEXT("/")))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("asset_path must be a content path starting with '/' (got: %s)"), *AssetPath));
+    }
+
+    bool bDeleteEmptyParent = false;
+    Params->TryGetBoolField(TEXT("delete_empty_parent"), bDeleteEmptyParent);
+
+    if (!UEditorAssetLibrary::DoesAssetExist(AssetPath))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Asset does not exist: %s"), *AssetPath));
+    }
+
+    const bool bDeleted = UEditorAssetLibrary::DeleteAsset(AssetPath);
+    if (!bDeleted)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to delete asset (it may be referenced by another asset, open in an editor, or marked read-only): %s"), *AssetPath));
+    }
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetStringField(TEXT("asset_path"), AssetPath);
+    ResultObj->SetBoolField(TEXT("deleted"), true);
+
+    if (bDeleteEmptyParent)
+    {
+        const FString ParentDir = FPaths::GetPath(AssetPath);
+
+        // Guard against deleting top-level mount points (/Game, /Engine, /Game/, etc.).
+        const bool bIsMountRoot = ParentDir.IsEmpty() || ParentDir == TEXT("/") ||
+            ParentDir.Equals(TEXT("/Game"), ESearchCase::IgnoreCase) ||
+            ParentDir.Equals(TEXT("/Engine"), ESearchCase::IgnoreCase);
+
+        ResultObj->SetStringField(TEXT("parent_directory"), ParentDir);
+
+        if (bIsMountRoot)
+        {
+            ResultObj->SetBoolField(TEXT("parent_directory_deleted"), false);
+            ResultObj->SetStringField(TEXT("parent_skip_reason"), TEXT("refused to delete mount-root directory"));
+        }
+        else if (!UEditorAssetLibrary::DoesDirectoryExist(ParentDir))
+        {
+            ResultObj->SetBoolField(TEXT("parent_directory_deleted"), false);
+            ResultObj->SetStringField(TEXT("parent_skip_reason"), TEXT("parent directory not found after asset delete"));
+        }
+        else
+        {
+            const TArray<FString> RemainingAssets = UEditorAssetLibrary::ListAssets(ParentDir, /*bRecursive*/ true, /*bIncludeFolder*/ false);
+            if (RemainingAssets.Num() > 0)
+            {
+                ResultObj->SetBoolField(TEXT("parent_directory_deleted"), false);
+                ResultObj->SetNumberField(TEXT("parent_remaining_assets"), RemainingAssets.Num());
+                ResultObj->SetStringField(TEXT("parent_skip_reason"), TEXT("directory still contains other assets"));
+            }
+            else
+            {
+                const bool bDirDeleted = UEditorAssetLibrary::DeleteDirectory(ParentDir);
+                ResultObj->SetBoolField(TEXT("parent_directory_deleted"), bDirDeleted);
+                if (!bDirDeleted)
+                {
+                    ResultObj->SetStringField(TEXT("parent_skip_reason"), TEXT("DeleteDirectory returned false"));
+                }
+            }
+        }
+    }
+
+    return ResultObj;
+}

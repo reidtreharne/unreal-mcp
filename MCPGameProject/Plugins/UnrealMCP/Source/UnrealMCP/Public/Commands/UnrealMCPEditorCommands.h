@@ -34,4 +34,7 @@ private:
 
     // Asset import commands
     TSharedPtr<FJsonObject> HandleImportFBX(const TSharedPtr<FJsonObject>& Params);
+
+    // Asset deletion commands
+    TSharedPtr<FJsonObject> HandleDeleteAsset(const TSharedPtr<FJsonObject>& Params);
 };
